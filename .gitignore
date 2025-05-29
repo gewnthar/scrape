@@ -1,0 +1,32 @@
+# Go build files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Output of go build
+backend/your_app_name # Replace your_app_name with your actual binary name later
+/scrape # If you build the binary in the root, and name it 'scrape'
+
+# Go
+bin/
+pkg/
+vendor/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/out/
+frontend/.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE / System files
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
