@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrape Advisory - FAA DST</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>FAA Advisory DST (Scrape Advisory)</h1>
+    </header>
+
+    <main>
+        <section id="route-finder">
+            <h2>Find Best Routes</h2>
+            <div>
+                <label for="origin">Origin:</label>
+                <input type="text" id="origin" name="origin" placeholder="e.g., JFK">
+                <label for="destination">Destination:</label>
+                <input type="text" id="destination" name="destination" placeholder="e.g., MIA">
+            </div>
+            <div>
+                <label for="route-date">Date:</label>
+                <input type="date" id="route-date" name="route-date">
+                <button id="find-routes-btn">Find Routes</button>
+            </div>
+            <div id="routes-results-area" class="results-area">
+                <p>Route results will appear here...</p>
+            </div>
+        </section>
+
+        <hr>
+
+        <section id="advisory-search">
+            <h2>Search Advisories</h2>
+            <div>
+                <label for="advisory-date">Date:</label>
+                <input type="date" id="advisory-date" name="advisory-date">
+                <label for="advisory-keyword">Keyword (optional):</label>
+                <input type="text" id="advisory-keyword" name="advisory-keyword" placeholder="e.g., implementation">
+                <button id="search-advisories-btn">Search Advisories</button>
+            </div>
+            <div id="advisories-summary-area" class="results-area">
+                <p>Advisory summaries will appear here...</p>
+            </div>
+            <div id="advisory-detail-area" class="results-area">
+                </div>
+        </section>
+        
+        <hr>
+
+        <section id="exploratory-search">
+            <h2>Exploratory Advisory Scrape (Auto-Save)</h2>
+            <div>
+                <label for="exploratory-date">Target Date (Day 1 of 00Z-08Z+1 window):</label>
+                <input type="date" id="exploratory-date" name="exploratory-date">
+                <button id="exploratory-search-btn">Start Exploratory Scrape</button>
+            </div>
+            <div id="exploratory-status-area" class="results-area">
+                <p>Exploratory scrape status will appear here...</p>
+            </div>
+        </section>
+
+        <hr>
+        
+        <section id="admin-actions">
+            <h2>Admin - Data Refresh</h2>
+            <p>Manually refresh static route databases from FAA CSVs.</p>
+            <div>
+                <button id="refresh-cdr-btn">Refresh CDRs</button>
+                <span id="cdr-refresh-status"></span>
+            </div>
+            <div>
+                <button id="refresh-prefroutes-btn">Refresh Preferred Routes</button>
+                <span id="prefroutes-refresh-status"></span>
+            </div>
+             <div>
+                <button id="check-update-cdr-btn">Check & Update CDRs (if needed)</button>
+                <span id="cdr-check-status"></span>
+            </div>
+            <div>
+                <button id="check-update-prefroutes-btn">Check & Update Preferred Routes (if needed)</button>
+                <span id="prefroutes-check-status"></span>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2025 Scrape Advisory</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
