@@ -155,3 +155,50 @@ hr {
 #admin-actions button {
     margin-right: 15px; /* Space between button and its status text */
 }
+
+/* ... (all existing styles) ... */
+
+.results-area table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    margin-bottom: 20px;
+    font-size: 0.9em;
+}
+
+.results-area th, .results-area td {
+    border: 1px solid var(--aviation-gray-medium);
+    padding: 8px;
+    text-align: left;
+}
+
+.results-area th {
+    background-color: var(--aviation-blue-dark); /* Darker blue for table headers */
+    color: var(--aviation-blue-light);
+    font-weight: bold;
+}
+
+.results-area tbody tr:nth-child(even) {
+    background-color: var(--bg-dark); /* Slightly different for even rows */
+}
+.results-area tbody tr:nth-child(odd) {
+    background-color: var(--bg-medium); 
+}
+
+.results-area h3 { /* Style for the group headings */
+    margin-top: 20px;
+    margin-bottom: 5px;
+    color: var(--aviation-accent-yellow);
+}
+
+.advisory-summary-list {
+    list-style: none;
+    padding-left: 0;
+}
+.advisory-summary-list li {
+    background-color: var(--bg-medium);
+    border: 1px solid var(--aviation-gray-light);
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+}

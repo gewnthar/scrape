@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('FAA DST Frontend Initialized');
 
     // --- DOM Elements ---
-    // (Keep all existing DOM Element selections as before)
     const findRoutesBtn = document.getElementById('find-routes-btn');
     const originInput = document.getElementById('origin');
     const destinationInput = document.getElementById('destination');
@@ -30,7 +29,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const checkUpdatePrefroutesBtn = document.getElementById('check-update-prefroutes-btn');
     const prefroutesCheckStatus = document.getElementById('prefroutes-check-status');
 
-    // New elements for data status
     const cdrLastUpdatedSpan = document.getElementById('cdr-last-updated');
     const prefroutesLastUpdatedSpan = document.getElementById('prefroutes-last-updated');
     const currentYearSpan = document.getElementById('current-year');
@@ -38,13 +36,116 @@ document.addEventListener('DOMContentLoaded', () => {
     const API_BASE_URL = '/api'; 
 
     // --- Helper Functions ---
-    // (displayResults and updateStatus helpers remain the same as before)
     function displayResults(areaElement, data, type) {
-        if (typeof data === 'string') {
-             areaElement.innerHTML = `<p>${data}</p>`;
-             return;
+        areaElement.innerHTML = ''; // Clear previous results
+
+        if (type === 'error' || typeof data === 'string') {
+            const p = document.createElement('p');
+            p.textContent = data;
+            if (type === 'error') p.style.color = 'var(--aviation-accent-orange)';
+            areaElement.appendChild(p);
+            return;
         }
-        areaElement.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+
+        if (type === 'status') { 
+            const p = document.createElement('p');
+            p.textContent = data.message || JSON.stringify(data);
+            areaElement.appendChild(p);
+            return;
+        }
+
+        if (type === 'routes' && Array.isArray(data)) {
+            if (data.length === 0) {
+                areaElement.innerHTML = '<p>No routes found matching your criteria.</p>';
+                return;
+            }
+
+            const routeGroups = {
+                preferred: [],
+                cdrNoCoord: [],
+                cdrCoordReq: [],
+                rqdAdvisory: [],
+                other: []
+            };
+
+            data.forEach(route => {
+                if (route.Source && route.Source.includes("Preferred Route")) {
+                    routeGroups.preferred.push(route);
+                } else if (route.Source && route.Source.includes("CDR (No Coord)")) {
+                    routeGroups.cdrNoCoord.push(route);
+                } else if (route.Source && route.Source.includes("CDR (Coord Req)")) {
+                    routeGroups.cdrCoordReq.push(route);
+                } else if (route.Source && route.Source.includes("RQD Advisory")) {
+                    routeGroups.rqdAdvisory.push(route);
+                } 
+                else {
+                    routeGroups.other.push(route);
+                }
+            });
+
+            const createRouteTable = (routes, title) => {
+                if (routes.length === 0) return '';
+                
+                let tableHtml = `<h3>${title}</h3><table><thead><tr>
+                                    <th>Origin</th>
+                                    <th>Destination</th>
+                                    <th>Route Code</th>
+                                    <th>Departure Fix</th>
+                                    <th>Route String</th>
+                                    <th>Source</th>
+                                    <th>Restrictions/Notes</th>
+                                 </tr></thead><tbody>`;
+                routes.forEach(r => {
+                    const origin = r.Origin || (r.Cdr ? r.Cdr.Origin : (r.Preferred ? r.Preferred.Origin : 'N/A'));
+                    const dest = r.Destination || (r.Cdr ? r.Cdr.Destination : (r.Preferred ? r.Preferred.Destination : 'N/A'));
+                    const routeCode = r.Cdr ? (r.Cdr.RouteCode || 'N/A') : 'N/A'; // Handle if Cdr.RouteCode is empty
+                    const depFix = r.Cdr ? (r.Cdr.DepartureFix || 'N/A') : 'N/A';
+                    const restrictions = r.Restrictions || r.Justification || '';
+
+                    tableHtml += `<tr>
+                                    <td>${origin}</td>
+                                    <td>${dest}</td>
+                                    <td>${routeCode}</td>
+                                    <td>${depFix}</td>
+                                    <td>${r.RouteString || 'N/A'}</td>
+                                    <td>${r.Source || 'N/A'}</td>
+                                    <td>${restrictions}</td>
+                                  </tr>`;
+                });
+                tableHtml += '</tbody></table>';
+                return tableHtml;
+            };
+
+            let content = '';
+            if(routeGroups.rqdAdvisory.length > 0) {
+                 content += createRouteTable(routeGroups.rqdAdvisory, 'Routes from Mandatory Advisories');
+            }
+            content += createRouteTable(routeGroups.preferred, 'Preferred Routes');
+            content += createRouteTable(routeGroups.cdrNoCoord, 'CDRs (No Coordination Required)');
+            content += createRouteTable(routeGroups.cdrCoordReq, 'CDRs (Coordination Required)');
+            if(routeGroups.other.length > 0) {
+                 content += createRouteTable(routeGroups.other, 'Other Routes/Info');
+            }
+
+            areaElement.innerHTML = content;
+
+        } else if (type === 'summaries' && Array.isArray(data)) {
+            if (data.length === 0) {
+                areaElement.innerHTML = '<p>No advisories found.</p>';
+                return;
+            }
+            const ul = document.createElement('ul');
+            ul.className = 'advisory-summary-list';
+            data.forEach(summary => {
+                const li = document.createElement('li');
+                li.innerHTML = `<strong>${summary.SummaryUniqueKey || 'Advisory'}</strong>: ${summary.ListPageRawText || 'No raw text.'} 
+                                <br><small>Has Detail Saved: ${summary.HasFullDetailSaved}</small>`;
+                ul.appendChild(li);
+            });
+            areaElement.appendChild(ul);
+        } else {
+            areaElement.innerHTML = `<p>Received data (type: ${type}):</p><pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
     }
 
     function updateStatus(element, message, isError = false) {
@@ -53,15 +154,13 @@ document.addEventListener('DOMContentLoaded', () => {
             element.style.color = isError ? 'var(--aviation-accent-orange)' : 'var(--aviation-accent-yellow)';
         }
     }
-
-    // --- NEW: Function to Fetch and Display Data Source Status ---
+    
     async function fetchAndDisplayDataStatus() {
-        // Default messages
         if(cdrLastUpdatedSpan) cdrLastUpdatedSpan.textContent = 'N/A';
         if(prefroutesLastUpdatedSpan) prefroutesLastUpdatedSpan.textContent = 'N/A';
 
         try {
-            const response = await fetch(`${API_BASE_URL}/admin/data-status`); // NEW API ENDPOINT
+            const response = await fetch(`${API_BASE_URL}/admin/data-status`); 
             const dataSources = await response.json();
 
             if (!response.ok) {
@@ -71,12 +170,14 @@ document.addEventListener('DOMContentLoaded', () => {
             dataSources.forEach(source => {
                 let displayText = 'Never updated';
                 if (source.last_successfully_downloaded_at) {
-                    displayText = `Downloaded: ${new Date(source.last_successfully_downloaded_at).toLocaleString()}`;
+                    displayText = `Refreshed: ${new Date(source.last_successfully_downloaded_at).toLocaleString()}`;
                     if (source.effective_until) {
-                        displayText += ` (Effective until: ${new Date(source.effective_until).toLocaleDateString()})`;
+                        displayText += ` (Data effective until: ${new Date(source.effective_until).toLocaleDateString()})`;
+                    } else {
+                        displayText += ` (Data effective dates not specified by FAA for this batch)`;
                     }
                 } else if (source.effective_until) {
-                     displayText = `Effective until: ${new Date(source.effective_until).toLocaleDateString()}`;
+                     displayText = `Data effective until: ${new Date(source.effective_until).toLocaleDateString()}`;
                 }
 
 
@@ -95,23 +196,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Event Listeners ---
-    // (Find Routes - no change needed, backend defaults date if routeDateInput.value is empty)
     if (findRoutesBtn) {
         findRoutesBtn.addEventListener('click', async () => {
             const origin = originInput.value.trim().toUpperCase();
             const destination = destinationInput.value.trim().toUpperCase();
-            const date = routeDateInput.value; // If empty, backend defaults to today
+            const date = routeDateInput.value; 
 
-            if (!origin || !destination ) { // Date is now optional on frontend input
+            if (!origin || !destination ) { 
                 displayResults(routesResultsArea, 'Origin and Destination are required.', 'error');
                 return;
             }
             routesResultsArea.innerHTML = '<p>Finding routes...</p>';
             try {
                 const payload = { origin, destination };
-                if (date) { // Only include date in payload if user selected one
+                if (date) { 
                     payload.date = date;
-                }
+                } // Backend defaults to today if date is not sent
                 const response = await fetch(`${API_BASE_URL}/routes/find`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -129,9 +229,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // (Search Advisories, Exploratory Search, Admin Refresh/Check buttons - listeners remain the same)
-    // ... (keep all other existing event listeners from the previous app.js version) ...
-    // Admin: Refresh CDRs
     if (refreshCdrBtn) {
         refreshCdrBtn.addEventListener('click', async () => {
             updateStatus(cdrRefreshStatus, 'Refreshing CDRs...');
@@ -140,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || `HTTP error ${response.status}`);
                 updateStatus(cdrRefreshStatus, data.message || 'CDR refresh initiated.');
-                fetchAndDisplayDataStatus(); // Refresh status after action
+                fetchAndDisplayDataStatus(); 
             } catch (error) {
                 console.error('Error refreshing CDRs:', error);
                 updateStatus(cdrRefreshStatus, `Error: ${error.message}`, true);
@@ -148,7 +245,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Admin: Refresh Preferred Routes
     if (refreshPrefroutesBtn) {
         refreshPrefroutesBtn.addEventListener('click', async () => {
             updateStatus(prefroutesRefreshStatus, 'Refreshing Preferred Routes...');
@@ -157,7 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || `HTTP error ${response.status}`);
                 updateStatus(prefroutesRefreshStatus, data.message || 'Preferred Routes refresh initiated.');
-                fetchAndDisplayDataStatus(); // Refresh status after action
+                fetchAndDisplayDataStatus(); 
             } catch (error) {
                 console.error('Error refreshing Preferred Routes:', error);
                 updateStatus(prefroutesRefreshStatus, `Error: ${error.message}`, true);
@@ -165,7 +261,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Admin: Check & Update CDRs
     if (checkUpdateCdrBtn) {
         checkUpdateCdrBtn.addEventListener('click', async () => {
             updateStatus(cdrCheckStatus, 'Checking/Updating CDRs...');
@@ -174,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || `HTTP error ${response.status}`);
                 updateStatus(cdrCheckStatus, data.message || 'CDR check/update process completed.');
-                fetchAndDisplayDataStatus(); // Refresh status after action
+                fetchAndDisplayDataStatus(); 
             } catch (error) {
                 console.error('Error checking/updating CDRs:', error);
                 updateStatus(cdrCheckStatus, `Error: ${error.message}`, true);
@@ -182,7 +277,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Admin: Check & Update Preferred Routes
     if (checkUpdatePrefroutesBtn) {
         checkUpdatePrefroutesBtn.addEventListener('click', async () => {
             updateStatus(prefroutesCheckStatus, 'Checking/Updating Preferred Routes...');
@@ -191,7 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || `HTTP error ${response.status}`);
                 updateStatus(prefroutesCheckStatus, data.message || 'Preferred Routes check/update process completed.');
-                fetchAndDisplayDataStatus(); // Refresh status after action
+                fetchAndDisplayDataStatus(); 
             } catch (error) {
                 console.error('Error checking/updating Preferred Routes:', error);
                 updateStatus(prefroutesCheckStatus, `Error: ${error.message}`, true);
@@ -199,7 +293,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Search Advisories (Summaries) - (Copied from previous version)
     if (searchAdvisoriesBtn) {
         searchAdvisoriesBtn.addEventListener('click', async () => {
             const date = advisoryDateInput.value;
@@ -231,7 +324,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Exploratory Search - (Copied from previous version)
     if(exploratorySearchBtn) {
         exploratorySearchBtn.addEventListener('click', async () => {
             const date = exploratoryDateInput.value;
@@ -258,11 +350,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-
     // --- Initial Page Load Actions ---
     if(currentYearSpan) {
         currentYearSpan.textContent = new Date().getFullYear();
     }
-    fetchAndDisplayDataStatus(); // Fetch status on page load
+    fetchAndDisplayDataStatus(); 
 
 });
