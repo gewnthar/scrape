@@ -10,10 +10,10 @@ import (
 
 	"github.com/gewnthar/scrape/backend/models" // Adjust to your module path
 	"github.com/gewnthar/scrape/backend/services"
+	"github.com/gewnthar/scrape/backend/utils" // Assuming you created utils/airports.go
 )
 
-// Re-defining these helpers here for now. Consider moving to a common utils package
-// if you haven't already defined them in another handler file you're actively using.
+// respondWithJSON_Route and respondWithError_Route helpers (as before) ...
 func respondWithJSON_Route(w http.ResponseWriter, code int, payload interface{}) {
 	response, err := json.Marshal(payload)
 	if err != nil {
@@ -31,9 +31,8 @@ func respondWithError_Route(w http.ResponseWriter, code int, message string) {
 	respondWithJSON_Route(w, code, map[string]string{"error": message})
 }
 
+
 // FindRoutesHandler handles requests to find and prioritize routes.
-// Expects POST to /api/routes/find
-// with JSON body: {"origin": "JFK", "destination": "MIA", "date": "YYYY-MM-DD"}
 func FindRoutesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError_Route(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
@@ -47,7 +46,6 @@ func FindRoutesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Basic validation
 	if req.Origin == "" {
 		respondWithError_Route(w, http.StatusBadRequest, "Missing 'origin' in request body")
 		return
@@ -56,22 +54,32 @@ func FindRoutesHandler(w http.ResponseWriter, r *http.Request) {
 		respondWithError_Route(w, http.StatusBadRequest, "Missing 'destination' in request body")
 		return
 	}
+
+	var queryDate time.Time
+	var err error
 	if req.Date == "" {
-		respondWithError_Route(w, http.StatusBadRequest, "Missing 'date' in request body")
-		return
+		queryDate = time.Now().UTC().Truncate(24 * time.Hour)
+		log.Printf("Handler: No date provided for FindRoutes, defaulting to today (UTC): %s\n", queryDate.Format("2006-01-02"))
+	} else {
+		queryDate, err = time.Parse("2006-01-02", req.Date)
+		if err != nil {
+			respondWithError_Route(w, http.StatusBadRequest, "Invalid date format for 'date'. Use YYYY-MM-DD. Error: "+err.Error())
+			return
+		}
 	}
 
-	queryDate, err := time.Parse("2006-01-02", req.Date)
-	if err != nil {
-		respondWithError_Route(w, http.StatusBadRequest, "Invalid date format for 'date'. Use YYYY-MM-DD. Error: "+err.Error())
-		return
-	}
+	// Normalize airport codes from user input
+	normalizedOrigin := utils.NormalizeAirportCode(req.Origin)
+	normalizedDestination := utils.NormalizeAirportCode(req.Destination)
 
-	log.Printf("Handler: Received find routes request for %s-%s on %s\n", req.Origin, req.Destination, queryDate.Format("2006-01-02"))
+	log.Printf("Handler: Received find routes request for %s-%s (normalized: %s-%s) on %s\n", 
+		req.Origin, req.Destination, 
+		normalizedOrigin, normalizedDestination, 
+		queryDate.Format("2006-01-02"))
 
 	serviceInput := services.FindBestRoutesInput{
-		Origin:      req.Origin,
-		Destination: req.Destination,
+		Origin:      normalizedOrigin,    // Use normalized
+		Destination: normalizedDestination, // Use normalized
 		QueryDate:   queryDate,
 	}
 
@@ -81,7 +89,7 @@ func FindRoutesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if recommendedRoutes == nil { // Ensure we always return an array for JSON, even if empty
+	if recommendedRoutes == nil { 
 		recommendedRoutes = []models.RecommendedRoute{}
 	}
 
