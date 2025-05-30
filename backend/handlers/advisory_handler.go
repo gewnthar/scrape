@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url" // For parsing query parameters for detail
-	"strings"
 	"time"
 
 	"github.com/gewnthar/scrape/backend/models" // Adjust to your module path
@@ -34,10 +32,7 @@ func respondWithError_Advisory(w http.ResponseWriter, code int, message string) 
 
 // --- Scenario A Handler ---
 
-// ExploratoryAdvisorySearchHandler handles requests for Scenario A:
-// Fetches advisories for a specific operational window (day 00Z to day+1 08Z)
-// and auto-saves both summaries and their full details.
-// Expects POST to /api/advisories/exploratory-search with JSON body: {"date": "YYYY-MM-DD"}
+// ExploratoryAdvisorySearchHandler (code remains the same as before)
 func ExploratoryAdvisorySearchHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError_Advisory(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
@@ -67,11 +62,9 @@ func ExploratoryAdvisorySearchHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Handler: Received exploratory search request for date: %s\n", targetDate.Format("2006-01-02"))
 
-	go func() { // Run processing in a goroutine so the HTTP request can return quickly
+	go func() { 
 		err := services.ProcessExploratoryAdvisorySearch(targetDate)
 		if err != nil {
-			// Log the error. Since this is async, we can't easily return HTTP error to original client.
-			// Consider a notification system or status endpoint for long-running tasks.
 			log.Printf("ERROR Handler: Exploratory search for %s failed: %v\n", targetDate.Format("2006-01-02"), err)
 		} else {
 			log.Printf("Handler: Exploratory search for %s completed successfully (background task).\n", targetDate.Format("2006-01-02"))
@@ -85,8 +78,7 @@ func ExploratoryAdvisorySearchHandler(w http.ResponseWriter, r *http.Request) {
 
 // --- Scenario B Handlers ---
 
-// GetAdvisorySummariesHandler fetches advisory summaries for a date, optionally filtered by keyword.
-// Expects GET to /api/advisories?date=YYYY-MM-DD[&keyword=...]
+// GetAdvisorySummariesHandler (code remains the same as before)
 func GetAdvisorySummariesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondWithError_Advisory(w, http.StatusMethodNotAllowed, "Only GET method is allowed")
@@ -115,7 +107,7 @@ func GetAdvisorySummariesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if summaries == nil { // Ensure we always return an array, even if empty
+	if summaries == nil { 
 		summaries = []models.AdvisorySummary{}
 	}
 	respondWithJSON_Advisory(w, http.StatusOK, summaries)
@@ -124,7 +116,6 @@ func GetAdvisorySummariesHandler(w http.ResponseWriter, r *http.Request) {
 // GetAdvisoryDetailHandler fetches a specific advisory detail.
 // It tries the DB first, then scrapes from FAA if not found (returns for viewing, does not auto-save).
 // Expects GET to /api/advisories/detail?summary_key=UNIQUE_KEY
-// OR GET to /api/advisories/detail?advn=X&adv_date=Y&facId=Z (passing through detail params)
 func GetAdvisoryDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondWithError_Advisory(w, http.StatusMethodNotAllowed, "Only GET method is allowed")
@@ -134,44 +125,18 @@ func GetAdvisoryDetailHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 	summaryKey := queryParams.Get("summary_key")
 	
-	var detailParams map[string]string
+	// Removed the unused 'detailParams map[string]string' declaration
+	
 	if summaryKey == "" { 
-		// If no summary_key, try to build detailParams from query (less ideal but a fallback)
-		// The service layer will need to be robust if it gets a nil detailParams if summaryKey is also missing
-		// and summaryKey is preferred to ensure we link to a known summary.
-		// For now, let's assume summaryKey is the primary way, or client sends detail_page_params as JSON in POST if complex.
-		// Or, if we must use GET, client could pass a base64 encoded JSON string of params.
-		// Let's simplify: client gets summaries, then uses summaryKey.
-		// If scraping ad-hoc without a summary, a different endpoint might be better.
-		// For now, if summaryKey is empty, we'll assume it's an error for THIS handler.
-		// The service `GetOrFetchAdvisoryDetail` expects detailParams if summaryKey leads to DB miss.
-		// This handler needs to provide those params to the service.
-		// A better approach for GetOrFetchAdvisoryDetail might be to take summaryKey,
-		// and the service itself looks up the params from the advisory_summaries table.
-		
-		// For this version, we require summaryKey to fetch detail params from summary table first
-		// Or, if this handler is meant to scrape "blindly" from params, it should be a POST with JSON body.
-		// Let's assume for now client provides summaryKey.
-		// The service layer `GetOrFetchAdvisoryDetail` will need to fetch the summary by key to get its params if needed.
-		// This handler will just pass the summaryKey.
-		
-		// Alternative: Pass all detail params in query for a "direct scrape" if key unknown
-		// This is complex for GET due to URL encoding of many params.
-		// For now, we will rely on summary_key.
-		// The service will look up params if scraping is needed.
-		// This means the service layer will need `GetAdvisorySummaryByKey`
-		// Let's stick to `summary_key` only for this GET handler for simplicity.
-		// The service `GetOrFetchAdvisoryDetail` should be robust enough.
-		if summaryKey == "" {
-			respondWithError_Advisory(w, http.StatusBadRequest, "Missing 'summary_key' query parameter")
-			return
-		}
+		respondWithError_Advisory(w, http.StatusBadRequest, "Missing 'summary_key' query parameter")
+		return
 	}
 
 	log.Printf("Handler: Received get detail request for summary_key: %s\n", summaryKey)
 	
-	// The service function GetOrFetchAdvisoryDetail will look up detailParams from summaryKey if needed.
-	detail, err := services.GetOrFetchAdvisoryDetail(summaryKey, nil) // Pass nil for detailParams; service should fetch if needed from summaryKey
+	// Pass nil for detailParams; service (GetOrFetchAdvisoryDetail) should fetch 
+	// the necessary parameters from the advisory_summaries table using summaryKey if a live scrape is needed.
+	detail, err := services.GetOrFetchAdvisoryDetail(summaryKey, nil) 
 	if err != nil {
 		respondWithError_Advisory(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get advisory detail for summary_key %s: %v", summaryKey, err))
 		return
@@ -185,8 +150,7 @@ func GetAdvisoryDetailHandler(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON_Advisory(w, http.StatusOK, detail)
 }
 
-// ConfirmSaveAdvisoryDetailHandler saves a provided advisory detail to the database.
-// Expects POST to /api/advisories/detail/save with JSON body of models.AdvisoryDetail
+// ConfirmSaveAdvisoryDetailHandler (code remains the same as before)
 func ConfirmSaveAdvisoryDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError_Advisory(w, http.StatusMethodNotAllowed, "Only POST method is allowed")

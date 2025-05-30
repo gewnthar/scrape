@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"net/url" // Added for parsing URL for filename pattern
-	"path/filepath" // Added for filepath.Base
 	"strings"
 	"time"
 

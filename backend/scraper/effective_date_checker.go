@@ -14,22 +14,17 @@ import (
 	"github.com/gewnthar/scrape/backend/models"
 )
 
-const (
-	// This selector should point to a region on the RMT pages that reliably contains the UL with effective dates.
-	// 'div.mainArea' is a good candidate based on your inspection.
-	// If it's too broad and finds too many ULs, we might need a more specific parent.
-	// QC_ACTION: Verify if "div.mainArea" is a suitable container for both RMT pages.
-	rmtPageDateContainerSelector = "div.mainArea"
+// const (
+//	// rmtPageDateContainerSelector = "div.mainArea" // This can be removed if selectors are always passed in
+// )
 
-	// Regex to find dates in format "Effective MM/DD/YYYY until MM/DD/YYYY"
-	// It captures the 'from' date in group 1 and the 'until' date in group 2.
-	effectiveDateRegexString = `Effective\s+(\d{2}/\d{2}/\d{4})\s+until\s+(\d{2}/\d{2}/\d{4})`
-	dateLayout               = "01/02/2006" // For parsing MM/DD/YYYY
-)
+// Regex to find dates in format "Effective MM/DD/YYYY until MM/DD/YYYY"
+var effectiveDateRegex = regexp.MustCompile(`Effective\s+(\d{2}/\d{2}/\d{4})\s+until\s+(\d{2}/\d{2}/\d{4})`)
+const dateLayout  = "01/02/2006" // For parsing MM/DD/YYYY
 
-var effectiveDateRegex = regexp.MustCompile(effectiveDateRegexString)
 
 // parseEffectiveDateString extracts 'from' and 'until' dates using the regex.
+// (This function remains the same as before)
 func parseEffectiveDateString(textToSearch string) (from time.Time, until time.Time, rawMatch string, err error) {
 	matches := effectiveDateRegex.FindStringSubmatch(textToSearch)
 	if len(matches) < 3 {
@@ -37,7 +32,7 @@ func parseEffectiveDateString(textToSearch string) (from time.Time, until time.T
 		return
 	}
 
-	rawMatch = matches[0] // The full matched string "Effective MM/DD/YYYY until MM/DD/YYYY"
+	rawMatch = matches[0] 
 	fromString := matches[1]
 	untilString := matches[2]
 
@@ -55,8 +50,9 @@ func parseEffectiveDateString(textToSearch string) (from time.Time, until time.T
 	return
 }
 
-// GetEffectiveDatesForDataSource scrapes the given URL, looks for a specific UL structure,
+// GetEffectiveDatesForDataSource scrapes the given URL, looks for a specific UL structure within the container,
 // and extracts effective date information.
+// (This function remains the same as before)
 func GetEffectiveDatesForDataSource(sourceName, pageURL, containerSelector string) (*models.DataSourceEffectiveInfo, error) {
 	log.Printf("Scraper: Checking effective dates for %s from %s (container: '%s')\n", sourceName, pageURL, containerSelector)
 
@@ -77,26 +73,24 @@ func GetEffectiveDatesForDataSource(sourceName, pageURL, containerSelector strin
 	}
 
 	var foundDateText string
-	// Find the container, then iterate through ULs within it
 	doc.Find(containerSelector).Find("ul").EachWithBreak(func(i int, ulSelection *goquery.Selection) bool {
-		// Check the first list item for "RMT WebService"
 		firstLiText := strings.TrimSpace(ulSelection.Find("li:first-of-type").Text())
 		if strings.Contains(firstLiText, "RMT WebService") {
-			// If found, the second list item should contain the effective dates
 			secondLiText := strings.TrimSpace(ulSelection.Find("li:nth-of-type(2)").Text())
 			if strings.Contains(secondLiText, "Effective") && strings.Contains(secondLiText, "until") {
 				foundDateText = secondLiText
-				return false // Stop iterating, we found our target UL
+				return false 
 			}
 		}
-		return true // Continue to the next UL
+		return true 
 	})
 
 	if foundDateText == "" {
 		log.Printf("WARN Scraper: Could not find the specific UL with 'RMT WebService' and 'Effective ... until ...' structure within container '%s' on page %s.", containerSelector, pageURL)
-		// For debugging, you could log the entire container's text:
-		// log.Printf("DEBUG: Container HTML for %s on %s: %s", containerSelector, pageURL, doc.Find(containerSelector).Text())
-		return nil, fmt.Errorf("target UL for effective dates not found on %s within %s", pageURL, containerSelector)
+		// For debugging, log the container's text to see what was searched
+		// containerHTML, _ := doc.Find(containerSelector).Html()
+		// log.Printf("DEBUG: Container HTML for %s on %s: %s", containerSelector, pageURL, containerHTML)
+		return nil, fmt.Errorf("target UL for effective dates not found on %s within container '%s'. QC: Verify container selector and page structure.", pageURL, containerSelector)
 	}
 
 	from, until, rawStr, err := parseEffectiveDateString(foundDateText)
@@ -117,22 +111,23 @@ func GetEffectiveDatesForDataSource(sourceName, pageURL, containerSelector strin
 }
 
 // ScrapeEffectiveDatesForCDR fetches effective dates for the CDR data source.
-func ScrapeEffectiveDatesForCDR() (*models.DataSourceEffectiveInfo, error) {
-	// The specific CSS selector from config is now less critical if the container approach works.
-	// We use the configured page URL and a general container selector.
+// It now accepts the containerSelector (typically from config) to use.
+func ScrapeEffectiveDatesForCDR(containerSelector string) (*models.DataSourceEffectiveInfo, error) { // MODIFIED: Added parameter
 	pageURL := config.AppConfig.FAAURLs.CdrEffectiveDatePage
-	// Use the globally defined container or one from config if you make it configurable per source
-	container := rmtPageDateContainerSelector 
-	// If you stored specific selectors for CDR page in config, you could use:
-	// container := config.AppConfig.ScraperSelectors.CdrEffectiveDateContainer (new config field)
-	return GetEffectiveDatesForDataSource("CDR", pageURL, container)
+	if containerSelector == "" { // Fallback if an empty selector is passed
+		log.Println("WARN Scraper: No specific CSS selector provided for CDR effective date container, using default 'body'. QC: This is likely inefficient/incorrect.")
+		containerSelector = "body" 
+	}
+	return GetEffectiveDatesForDataSource("CDR", pageURL, containerSelector)
 }
 
 // ScrapeEffectiveDatesForPreferredRoutes fetches effective dates for the Preferred Routes data source.
-func ScrapeEffectiveDatesForPreferredRoutes() (*models.DataSourceEffectiveInfo, error) {
+// It now accepts the containerSelector (typically from config) to use.
+func ScrapeEffectiveDatesForPreferredRoutes(containerSelector string) (*models.DataSourceEffectiveInfo, error) { // MODIFIED: Added parameter
 	pageURL := config.AppConfig.FAAURLs.PreferredRoutesEffectiveDatePage
-	container := rmtPageDateContainerSelector
-	// If you stored specific selectors for Pref Routes page in config, you could use:
-	// container := config.AppConfig.ScraperSelectors.PreferredRoutesEffectiveDateContainer (new config field)
-	return GetEffectiveDatesForDataSource("PreferredRoutes", pageURL, container)
+	if containerSelector == "" { // Fallback if an empty selector is passed
+		log.Println("WARN Scraper: No specific CSS selector provided for Preferred Routes effective date container, using default 'body'. QC: This is likely inefficient/incorrect.")
+		containerSelector = "body"
+	}
+	return GetEffectiveDatesForDataSource("PreferredRoutes", pageURL, containerSelector)
 }
