@@ -3,8 +3,9 @@ package scraper
 
 import (
 	"fmt"
-	"io" // Make sure io is imported for io.ReadAll
+	"io"
 	"log"
+	// "os" // Only for TestParseLocalCSVs if you use it
 
 	"github.com/gewnthar/scrape/backend/models" // Adjust to your module path
 	"github.com/jszwec/csvutil"
@@ -15,18 +16,31 @@ import (
 func ParseCdrCsv(reader io.Reader) ([]models.CdrRoute, error) {
 	var cdrRoutes []models.CdrRoute
 
-	// Read all data from the reader first
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CSV data for CDRs: %w", err)
 	}
 
-	// Unmarshal the data
+	// csvutil.Unmarshal uses the `csv:"..."` tags in models.CdrRoute
+	// which should now EXACTLY match your CSV headers.
 	if err := csvutil.Unmarshal(data, &cdrRoutes); err != nil {
+		previewLength := 300 // Show a bit more for context
+		if len(data) < previewLength {
+			previewLength = len(data)
+		}
+		log.Printf("ERROR unmarshalling CDR CSV. Data preview (first %d bytes):\n%s\n", previewLength, string(data[:previewLength]))
 		return nil, fmt.Errorf("failed to unmarshal CDR CSV data: %w", err)
 	}
 
 	log.Printf("Successfully parsed %d CDR routes from CSV.\n", len(cdrRoutes))
+	// Log first few parsed routes for QC to see if fields are populated
+	for i := 0; i < 5 && i < len(cdrRoutes); i++ {
+		log.Printf("DIAGNOSTIC Parsed CDR [%d]: Origin: '%s', Dest: '%s', Code: '%s', Route: '%s'\n",
+			i, cdrRoutes[i].Origin, cdrRoutes[i].Destination, cdrRoutes[i].RouteCode, cdrRoutes[i].RouteString)
+	}
+	if len(cdrRoutes) == 0 {
+		log.Println("WARN: Parsed 0 CDR routes. Check CSV content and model tags.")
+	}
 	return cdrRoutes, nil
 }
 
@@ -35,20 +49,35 @@ func ParseCdrCsv(reader io.Reader) ([]models.CdrRoute, error) {
 func ParsePreferredRoutesCsv(reader io.Reader) ([]models.PreferredRoute, error) {
 	var preferredRoutes []models.PreferredRoute
 
-	// Read all data from the reader first
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed_to_read_csv_data_for_preferred_routes: %w", err)
+		return nil, fmt.Errorf("failed to read CSV data for Preferred Routes: %w", err)
 	}
 
-	// Unmarshal the data
+	// csvutil.Unmarshal uses the `csv:"..."` tags in models.PreferredRoute
+	// which should now EXACTLY match your CSV headers.
 	if err := csvutil.Unmarshal(data, &preferredRoutes); err != nil {
+		previewLength := 300 // Show a bit more for context
+		if len(data) < previewLength {
+			previewLength = len(data)
+		}
+		log.Printf("ERROR unmarshalling Preferred Routes CSV. Data preview (first %d bytes):\n%s\n", previewLength, string(data[:previewLength]))
 		return nil, fmt.Errorf("failed to unmarshal Preferred Routes CSV data: %w", err)
 	}
 
 	log.Printf("Successfully parsed %d Preferred Routes from CSV.\n", len(preferredRoutes))
+	// Log first few parsed routes for QC to see if fields are populated
+	for i := 0; i < 5 && i < len(preferredRoutes); i++ {
+		log.Printf("DIAGNOSTIC Parsed Preferred Route [%d]: Origin: '%s', Dest: '%s', Type: '%s', Route: '%s'\n",
+			i, preferredRoutes[i].Origin, preferredRoutes[i].Destination, preferredRoutes[i].Type, preferredRoutes[i].RouteString)
+	}
+	if len(preferredRoutes) == 0 {
+		log.Println("WARN: Parsed 0 Preferred routes. Check CSV content and model tags.")
+	}
 	return preferredRoutes, nil
 }
+
+
 
 // --- Example Usage / Testing Function (Optional - for local testing) ---
 // (TestParseLocalCSVs function remains the same as before)
