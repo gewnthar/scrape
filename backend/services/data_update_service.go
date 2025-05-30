@@ -2,133 +2,184 @@
 package services
 
 import (
+	// fmt, log, os, path/filepath, time, net/url (for InitLastKnownEffectiveDates)
+	// config, database, models, scraper (as before)
 	"fmt"
+	"io" // Needed for parseFunc signature
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/gewnthar/scrape/backend/config" // Adjust to your module path
+	"github.com/gewnthar/scrape/backend/config"
 	"github.com/gewnthar/scrape/backend/database"
 	"github.com/gewnthar/scrape/backend/models"
 	"github.com/gewnthar/scrape/backend/scraper"
 )
 
-// Simulating a simple in-memory store or a place to get this from DB later
-var lastKnownEffectiveDates = make(map[string]time.Time) // Key: "CDR" or "PreferredRoutes", Value: EffectiveUntil
+var lastKnownEffectiveDates = make(map[string]time.Time)
 
-// UpdateStaticRouteDataIfNeeded checks if an update for a static route data source is needed
-// by comparing the "Effective Until" date on the FAA website with the last known one.
-// sourceName should be "CDR" or "PreferredRoutes".
-// cssSelectorForDate is the specific CSS selector for the effective date string on the FAA page.
+const (
+	sourceCDR             = "CDR"
+	sourcePreferredRoutes = "PreferredRoutes"
+)
+
+func InitLastKnownEffectiveDates() {
+	log.Println("Service: Initializing last known effective dates for static route data...")
+	// For CDRs
+	var cdrPattern string
+	if u, err := url.Parse(config.AppConfig.FAAURLs.CdrCSV); err == nil {
+		cdrPattern = filepath.Base(u.Path)
+	} else {
+		cdrPattern = "codedswap_db.csv" // Fallback
+		log.Printf("WARN Service: Could not parse CdrCSV URL, using default pattern '%s'", cdrPattern)
+	}
+	cdrDate, err := database.GetMaxEffectiveEndDateForSource(cdrPattern) // Pass base filename pattern
+	if err != nil {
+		log.Printf("ERROR Service: Failed to get max effective end date for CDRs from DB: %v\n", err)
+	} else if cdrDate != nil {
+		lastKnownEffectiveDates[sourceCDR] = *cdrDate
+		log.Printf("INFO Service: Initialized last known CDR effective until date from DB: %s\n", cdrDate.Format("2006-01-02"))
+	} else {
+		log.Println("INFO Service: No existing CDR effective end date found in DB.")
+	}
+
+	// For Preferred Routes
+	var prefPattern string
+	if u, err := url.Parse(config.AppConfig.FAAURLs.PreferredRoutesCSV); err == nil {
+		prefPattern = filepath.Base(u.Path)
+	} else {
+		prefPattern = "prefroutes_db.csv" // Fallback
+		log.Printf("WARN Service: Could not parse PreferredRoutesCSV URL, using default pattern '%s'", prefPattern)
+	}
+	prefDate, err := database.GetMaxEffectiveEndDateForSource(prefPattern) // Pass base filename pattern
+	if err != nil {
+		log.Printf("ERROR Service: Failed to get max effective end date for Preferred Routes from DB: %v\n", err)
+	} else if prefDate != nil {
+		lastKnownEffectiveDates[sourcePreferredRoutes] = *prefDate
+		log.Printf("INFO Service: Initialized last known Preferred Routes effective until date from DB: %s\n", prefDate.Format("2006-01-02"))
+	} else {
+		log.Println("INFO Service: No existing Preferred Routes effective end date found in DB.")
+	}
+	// TODO: Enhance this to use the `data_source_versions` table for more robust tracking.
+}
+
 func UpdateStaticRouteDataIfNeeded(sourceName string, cssSelectorForDate string) error {
-	log.Printf("DataUpdateService: Checking if update is needed for %s data...\n", sourceName)
+	log.Printf("Service: Checking if update is needed for %s data (selector: '%s')...\n", sourceName, cssSelectorForDate)
+	log.Println("Service: NOTE - 'UpdateIfNeeded' functionality is currently limited as live 'Effective Date' scraping is deferred pending CSS selector finalization.")
 
 	var currentFAAEffectiveInfo *models.DataSourceEffectiveInfo
 	var err error
 
-	// Step 1: Get current effective dates from FAA website
+	// Step 1: Get current effective dates from FAA website (THIS PART IS DEFERRED UNTIL SELECTORS ARE FINAL)
+	// For now, this will likely fail or use placeholder selectors if called.
+	// We can simulate it not finding a newer date to prevent updates unless forced.
+	log.Printf("Service: Skipping live FAA effective date check for %s as per current focus. To enable, provide correct CSS selectors.", sourceName)
+	// To simulate no update needed based on date check:
+	// return nil
+
+	// If we were to proceed with the check:
+
 	switch sourceName {
-	case "CDR":
+	case sourceCDR:
 		currentFAAEffectiveInfo, err = scraper.ScrapeEffectiveDatesForCDR(cssSelectorForDate)
-	case "PreferredRoutes":
+	case sourcePreferredRoutes:
 		currentFAAEffectiveInfo, err = scraper.ScrapeEffectiveDatesForPreferredRoutes(cssSelectorForDate)
 	default:
 		return fmt.Errorf("unknown data source name: %s", sourceName)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to scrape effective dates for %s: %w", sourceName, err)
+		return fmt.Errorf("failed to scrape effective dates for %s: %w. QC: Verify CSS selector '%s'", sourceName, err, cssSelectorForDate)
 	}
 	if currentFAAEffectiveInfo == nil {
-		return fmt.Errorf("no effective date info retrieved for %s", sourceName)
+		return fmt.Errorf("no effective date info retrieved from FAA for %s. QC: Verify CSS selector '%s'", sourceName, cssSelectorForDate)
 	}
+	log.Printf("Service: Current FAA effective until date for %s: %s\n", sourceName, currentFAAEffectiveInfo.EffectiveUntil.Format("2006-01-02"))
 
-	log.Printf("DataUpdateService: Current FAA effective until date for %s: %s\n", sourceName, currentFAAEffectiveInfo.EffectiveUntil.Format("2006-01-02"))
-
-	// Step 2: Compare with last known effective date (simple in-memory version for now)
-	// In a real system, you might get this from a database table that logs data versions.
 	lastProcessedUntil, found := lastKnownEffectiveDates[sourceName]
 	updateNeeded := false
+	currentFAAUntilDate := time.Date(currentFAAEffectiveInfo.EffectiveUntil.Year(), currentFAAEffectiveInfo.EffectiveUntil.Month(), currentFAAEffectiveInfo.EffectiveUntil.Day(), 0, 0, 0, 0, time.UTC)
 
 	if !found {
-		log.Printf("DataUpdateService: No previous effective date found for %s. Update needed.\n", sourceName)
-		updateNeeded = true
-	} else if currentFAAEffectiveInfo.EffectiveUntil.After(lastProcessedUntil) {
-		log.Printf("DataUpdateService: FAA effective date for %s (%s) is newer than last processed (%s). Update needed.\n",
-			sourceName,
-			currentFAAEffectiveInfo.EffectiveUntil.Format("2006-01-02"),
-			lastProcessedUntil.Format("2006-01-02"))
 		updateNeeded = true
 	} else {
-		log.Printf("DataUpdateService: Current %s data (effective until %s) is up-to-date.\n",
-			sourceName, lastProcessedUntil.Format("2006-01-02"))
+		lastProcessedUntilDate := time.Date(lastProcessedUntil.Year(), lastProcessedUntil.Month(), lastProcessedUntil.Day(), 0, 0, 0, 0, time.UTC)
+		if currentFAAUntilDate.After(lastProcessedUntilDate) {
+			updateNeeded = true
+		}
 	}
-	
-	// Incorporate 56-day cycle prediction (optional enhancement here or in scheduler)
-	// For example, if !updateNeeded but today is near/past lastProcessedUntil + 56 days,
-	// you might force a check or log a warning.
 
 	if updateNeeded {
-		log.Printf("DataUpdateService: Proceeding with update for %s...\n", sourceName)
-		// Pass the effective dates scraped from FAA to the ForceUpdate function
-		// so the new data is tagged with its correct validity period.
-		return ForceUpdateStaticRouteData(sourceName, currentFAAEffectiveInfo)
+		log.Printf("Service: Update detected as needed for %s based on FAA effective dates.\n", sourceName)
+		return ForceUpdateStaticRouteData(sourceName, currentFAAEffectiveInfo) // Pass the live info
+	} else {
+		log.Printf("Service: No update deemed necessary for %s based on FAA effective dates.\n", sourceName)
 	}
 
+	log.Printf("Service: 'UpdateIfNeeded' for %s concluded (live date check deferred).\n", sourceName)
 	return nil
 }
 
 // ForceUpdateStaticRouteData forces a download, parse, and save of a static route data source.
-// If provided, `knownEffectiveInfo` will be used to tag the data; otherwise, it will be scraped.
-func ForceUpdateStaticRouteData(sourceName string, knownEffectiveInfo *models.DataSourceEffectiveInfo) error {
-	log.Printf("DataUpdateService: Forcing update for %s data...\n", sourceName)
+// If `liveEffectiveInfoFromFAA` is nil (e.g. for a purely manual refresh bypassing date check),
+// then effective dates stored in DB for the new data will be NULL.
+func ForceUpdateStaticRouteData(sourceName string, liveEffectiveInfoFromFAA *models.DataSourceEffectiveInfo) error {
+	log.Printf("Service: Forcing update for %s data...\n", sourceName)
 
 	var localPath string
-	var err error
-	currentEffectiveInfo := knownEffectiveInfo
+	var csvURL string // Not strictly needed here as downloadFunc gets from config
+	var downloadFunc func() (string, error)
+	var parseFunc func(io.Reader) (interface{}, error)
+	var saveFunc func(interface{}, string, *time.Time, *time.Time) error
 
-	// If effective info isn't passed in (e.g. direct manual refresh without prior check), scrape it.
-	if currentEffectiveInfo == nil {
-		log.Printf("DataUpdateService: No known effective info for %s, scraping live dates...\n", sourceName)
-		// QC Note: The CSS selectors will be passed from a handler or config for these.
-		// For now, using empty string will make scraper use its default (which needs fixing by QC).
-		cssSelector := "" // Placeholder - should be passed or configured
-		switch sourceName {
-		case "CDR":
-			currentEffectiveInfo, err = scraper.ScrapeEffectiveDatesForCDR(cssSelector)
-		case "PreferredRoutes":
-			currentEffectiveInfo, err = scraper.ScrapeEffectiveDatesForPreferredRoutes(cssSelector)
-		default:
-			return fmt.Errorf("unknown data source name for force update: %s", sourceName)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to scrape effective dates during force update for %s: %w", sourceName, err)
-		}
-		if currentEffectiveInfo == nil {
-			return fmt.Errorf("could not retrieve effective date info for %s during force update", sourceName)
-		}
-		log.Printf("DataUpdateService: Scraped live FAA effective dates for %s: From %s, Until %s\n",
-			sourceName,
-			currentEffectiveInfo.EffectiveFrom.Format("2006-01-02"),
-			currentEffectiveInfo.EffectiveUntil.Format("2006-01-02"))
+	var effectiveFrom, effectiveUntil *time.Time
+	var sourceFileForDB string
+
+	if liveEffectiveInfoFromFAA != nil {
+		effectiveFrom = &liveEffectiveInfoFromFAA.EffectiveFrom
+		effectiveUntil = &liveEffectiveInfoFromFAA.EffectiveUntil
+		log.Printf("Service: Using provided effective dates for %s: From %s, Until %s\n",
+			sourceName, effectiveFrom.Format("2006-01-02"), effectiveUntil.Format("2006-01-02"))
+	} else {
+		log.Printf("Service: No live effective date info provided for %s. Effective dates in DB will be NULL for this batch.", sourceName)
+		// effectiveFrom and effectiveUntil remain nil
 	}
 
+	// Configure download, parse, and save functions based on sourceName
+	switch sourceName {
+	case sourceCDR:
+		csvURL = config.AppConfig.FAAURLs.CdrCSV // For logging
+		downloadFunc = scraper.DownloadCdrCsv
+		parseFunc = func(r io.Reader) (interface{}, error) { return scraper.ParseCdrCsv(r) }
+		saveFunc = func(data interface{}, sf string, es *time.Time, ee *time.Time) error {
+			return database.SaveCdrRoutes(data.([]models.CdrRoute), sf, es, ee)
+		}
+	case sourcePreferredRoutes:
+		csvURL = config.AppConfig.FAAURLs.PreferredRoutesCSV // For logging
+		downloadFunc = scraper.DownloadPreferredRoutesCsv
+		parseFunc = func(r io.Reader) (interface{}, error) { return scraper.ParsePreferredRoutesCsv(r) }
+		saveFunc = func(data interface{}, sf string, es *time.Time, ee *time.Time) error {
+			return database.SavePreferredRoutes(data.([]models.PreferredRoute), sf, es, ee)
+		}
+	default:
+		return fmt.Errorf("unknown data source name for forced update: %s", sourceName)
+	}
 
 	// Step 1: Download CSV
-	switch sourceName {
-	case "CDR":
-		localPath, err = scraper.DownloadCdrCsv()
-	case "PreferredRoutes":
-		localPath, err = scraper.DownloadPreferredRoutesCsv()
-	default:
-		return fmt.Errorf("unknown data source name for download: %s", sourceName)
-	}
-
+	log.Printf("Service: Downloading %s CSV from %s\n", sourceName, csvURL) // Log the URL being used
+	localPath, err := downloadFunc()
 	if err != nil {
 		return fmt.Errorf("failed to download %s CSV: %w", sourceName, err)
 	}
-	defer os.Remove(localPath) // Clean up downloaded file after processing
+	log.Printf("Service: Downloaded %s to %s\n", sourceName, localPath)
+	defer func() {
+		log.Printf("Service: Cleaning up temporary file: %s\n", localPath)
+		if err := os.Remove(localPath); err != nil {
+			log.Printf("ERROR Service: Failed to remove temporary file %s: %v\n", localPath, err)
+		}
+	}()
 
 	// Step 2: Open and Parse CSV
 	file, err := os.Open(localPath)
@@ -137,52 +188,35 @@ func ForceUpdateStaticRouteData(sourceName string, knownEffectiveInfo *models.Da
 	}
 	defer file.Close()
 
-	sourceFileName := filepath.Base(localPath) // e.g., "codedswap_db.csv"
-	// We can enhance sourceFileName with a date if needed:
-	// sourceFileName = fmt.Sprintf("%s_%s", filepath.Base(localPath), time.Now().Format("20060102"))
-
-
-	// Step 3: Save to Database
-	switch sourceName {
-	case "CDR":
-		cdrRoutes, parseErr := scraper.ParseCdrCsv(file)
-		if parseErr != nil {
-			return fmt.Errorf("failed to parse CDR CSV from %s: %w", localPath, parseErr)
-		}
-		dbErr := database.SaveCdrRoutes(cdrRoutes, sourceFileName, &currentEffectiveInfo.EffectiveFrom, &currentEffectiveInfo.EffectiveUntil)
-		if dbErr != nil {
-			return fmt.Errorf("failed to save CDR routes to database: %w", dbErr)
-		}
-	case "PreferredRoutes":
-		prefRoutes, parseErr := scraper.ParsePreferredRoutesCsv(file)
-		if parseErr != nil {
-			return fmt.Errorf("failed to parse Preferred Routes CSV from %s: %w", localPath, parseErr)
-		}
-		dbErr := database.SavePreferredRoutes(prefRoutes, sourceFileName, &currentEffectiveInfo.EffectiveFrom, &currentEffectiveInfo.EffectiveUntil)
-		if dbErr != nil {
-			return fmt.Errorf("failed to save Preferred Routes to database: %w", dbErr)
-		}
-	default:
-		return fmt.Errorf("unknown data source name for saving: %s", sourceName)
+	parsedData, err := parseFunc(file)
+	if err != nil {
+		return fmt.Errorf("failed to parse %s CSV from %s: %w", sourceName, localPath, err)
 	}
 
-	// Update our simple in-memory store of last known effective dates
-	lastKnownEffectiveDates[sourceName] = currentEffectiveInfo.EffectiveUntil
-	log.Printf("DataUpdateService: Successfully updated %s data. New effective until date: %s\n",
-		sourceName, currentEffectiveInfo.EffectiveUntil.Format("2006-01-02"))
+	// Step 3: Save to Database
+	sourceFileForDB = filepath.Base(localPath)
+	if effectiveFrom != nil { // Append effective_from date to source file name if known
+		sourceFileForDB = fmt.Sprintf("%s_%s", filepath.Base(localPath), effectiveFrom.Format("20060102"))
+	}
+	
+	err = saveFunc(parsedData, sourceFileForDB, effectiveFrom, effectiveUntil)
+	if err != nil {
+		return fmt.Errorf("failed to save %s routes to database (source file: %s): %w", sourceName, sourceFileForDB, err)
+	}
+
+	// Step 4: Update our simple in-memory store (and ideally persistent store)
+	if effectiveUntil != nil {
+		lastKnownEffectiveDates[sourceName] = *effectiveUntil
+		log.Printf("Service: Successfully forced update for %s data. New effective until date in memory: %s\n",
+			sourceName, effectiveUntil.Format("2006-01-02"))
+		// TODO: Persist this update to data_source_versions table
+		// e.g., database.LogDataSourceVersionUpdate(sourceName, csvURL, sourceFileForDB, effectiveFrom, effectiveUntil, time.Now())
+	} else {
+		log.Printf("Service: Successfully forced update for %s data. Effective dates are NULL for this batch.\n", sourceName)
+		// If effectiveUntil is nil, we might want to remove it from lastKnownEffectiveDates
+		// or have a strategy for when to re-check if dates were NULL.
+		// For now, if it was nil, the map entry for sourceName won't be updated with a specific date.
+	}
 
 	return nil
-}
-
-// InitLastKnownEffectiveDates could be called at startup to populate 'lastKnownEffectiveDates'
-// by querying the MAX(effective_date_end) from your cdm_routes and nfdc_preferred_routes tables
-// for each source type. This makes the "UpdateIfNeeded" logic more robust across restarts.
-// For now, it's a simple in-memory map that resets on restart.
-func InitLastKnownEffectiveDates() {
-    // Placeholder: In a real app, query DB for max effective_date_end for each source
-    // For example:
-    // SELECT MAX(effective_date_end) FROM cdm_routes WHERE source_file LIKE 'codedswap_db.csv%';
-    // SELECT MAX(effective_date_end) FROM nfdc_preferred_routes WHERE source_file LIKE 'prefroutes_db.csv%';
-    // And then populate lastKnownEffectiveDates map.
-    log.Println("DataUpdateService: LastKnownEffectiveDates initialized (currently in-memory, resets on start).")
 }

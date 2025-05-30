@@ -10,20 +10,16 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/gewnthar/scrape/backend/models" // Adjust to your module path
+	"github.com/gewnthar/scrape/backend/config" // For Page URLs
+	"github.com/gewnthar/scrape/backend/models"
 )
 
 const (
-	// QC: YOU MUST VERIFY AND UPDATE THESE URLs AND SELECTORS!
-	cdrQueryPageURL          = "https://www.fly.faa.gov/rmt/cdm_operational_coded_departur.jsp"
-	preferredRoutesQueryPageURL = "https://www.fly.faa.gov/rmt/nfdc_preferred_routes_database.jsp"
-
-	// QC: Example selector - find the actual CSS selector for the element containing the date string.
-	// It might be a <p>, <span>, <div> with a specific class or ID, or within a table.
-	// For example, if the text is in <p class="effective-dates">Effective ...</p>
-	// the selector would be "p.effective-dates"
-	// THIS IS A GUESS - PLEASE UPDATE:
-	defaultDateStringSelector = "body" // Fallback, search whole body - VERY INEFFICIENT, PLEASE REFINE
+	// This selector should point to a region on the RMT pages that reliably contains the UL with effective dates.
+	// 'div.mainArea' is a good candidate based on your inspection.
+	// If it's too broad and finds too many ULs, we might need a more specific parent.
+	// QC_ACTION: Verify if "div.mainArea" is a suitable container for both RMT pages.
+	rmtPageDateContainerSelector = "div.mainArea"
 
 	// Regex to find dates in format "Effective MM/DD/YYYY until MM/DD/YYYY"
 	// It captures the 'from' date in group 1 and the 'until' date in group 2.
@@ -33,50 +29,11 @@ const (
 
 var effectiveDateRegex = regexp.MustCompile(effectiveDateRegexString)
 
-// fetchPageAndFindText fetches a URL and uses a goquery selector to find text.
-func fetchPageAndFindText(url string, selector string) (string, error) {
-	client := http.Client{Timeout: 20 * time.Second}
-	res, err := client.Get(url)
-	if err != nil {
-		return "", fmt.Errorf("failed to get URL %s: %w", url, err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to get URL %s: status code %d", url, res.StatusCode)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(res.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse HTML from %s: %w", url, err)
-	}
-
-	// Find the text using the selector.
-	// If selector is broad (like "body"), it might return a lot of text.
-	// A more specific selector is highly recommended.
-	foundText := doc.Find(selector).First().Text()
-	if foundText == "" {
-		// Try searching the whole body if specific selector yields nothing
-		// but warn if the specific selector was not the default "body"
-		if selector != "body" {
-			log.Printf("Warning: CSS selector '%s' yielded no text on %s. Falling back to searching body.", selector, url)
-			foundText = doc.Find("body").Text()
-		}
-		if foundText == "" {
-			return "", fmt.Errorf("no text found with selector '%s' (or in body) on page %s", selector, url)
-		}
-	}
-	return strings.TrimSpace(foundText), nil
-}
-
 // parseEffectiveDateString extracts 'from' and 'until' dates using the regex.
-func parseEffectiveDateString(text string) (from time.Time, until time.Time, rawMatch string, err error) {
-	matches := effectiveDateRegex.FindStringSubmatch(text)
+func parseEffectiveDateString(textToSearch string) (from time.Time, until time.Time, rawMatch string, err error) {
+	matches := effectiveDateRegex.FindStringSubmatch(textToSearch)
 	if len(matches) < 3 {
-		// If the main regex doesn't match, try to find just one date if possible,
-		// or look for simpler patterns if the FAA format varies.
-		// For now, we require the full "Effective ... until ..." pattern.
-		err = fmt.Errorf("could not find full 'Effective ... until ...' pattern in text: %s", text)
+		err = fmt.Errorf("could not find full 'Effective ... until ...' pattern in provided text block. Text searched: %s", textToSearch)
 		return
 	}
 
@@ -98,29 +55,56 @@ func parseEffectiveDateString(text string) (from time.Time, until time.Time, raw
 	return
 }
 
-// GetEffectiveDatesForDataSource scrapes the given URL and selector for effective date information.
-func GetEffectiveDatesForDataSource(sourceName, url, cssSelector string) (*models.DataSourceEffectiveInfo, error) {
-	log.Printf("Checking effective dates for %s from %s\n", sourceName, url)
-	
-	// Use defaultDateStringSelector if a specific one isn't provided or is empty
-	actualSelector := cssSelector
-	if actualSelector == "" {
-		actualSelector = defaultDateStringSelector
-	}
+// GetEffectiveDatesForDataSource scrapes the given URL, looks for a specific UL structure,
+// and extracts effective date information.
+func GetEffectiveDatesForDataSource(sourceName, pageURL, containerSelector string) (*models.DataSourceEffectiveInfo, error) {
+	log.Printf("Scraper: Checking effective dates for %s from %s (container: '%s')\n", sourceName, pageURL, containerSelector)
 
-	pageText, err := fetchPageAndFindText(url, actualSelector)
+	client := http.Client{Timeout: 20 * time.Second}
+	res, err := client.Get(pageURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch or find text for %s: %w", sourceName, err)
+		return nil, fmt.Errorf("failed to get URL %s: %w", pageURL, err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get URL %s: status code %d", pageURL, res.StatusCode)
 	}
 
-	from, until, rawStr, err := parseEffectiveDateString(pageText)
+	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
-		// Log the text we tried to parse for easier debugging by the user
-		log.Printf("Full text searched for date pattern in %s: %s\n", sourceName, pageText)
-		return nil, fmt.Errorf("failed to parse effective dates for %s: %w", sourceName, err)
+		return nil, fmt.Errorf("failed to parse HTML from %s: %w", pageURL, err)
 	}
 
-	log.Printf("Found effective dates for %s: From %s, Until %s (Raw: '%s')\n",
+	var foundDateText string
+	// Find the container, then iterate through ULs within it
+	doc.Find(containerSelector).Find("ul").EachWithBreak(func(i int, ulSelection *goquery.Selection) bool {
+		// Check the first list item for "RMT WebService"
+		firstLiText := strings.TrimSpace(ulSelection.Find("li:first-of-type").Text())
+		if strings.Contains(firstLiText, "RMT WebService") {
+			// If found, the second list item should contain the effective dates
+			secondLiText := strings.TrimSpace(ulSelection.Find("li:nth-of-type(2)").Text())
+			if strings.Contains(secondLiText, "Effective") && strings.Contains(secondLiText, "until") {
+				foundDateText = secondLiText
+				return false // Stop iterating, we found our target UL
+			}
+		}
+		return true // Continue to the next UL
+	})
+
+	if foundDateText == "" {
+		log.Printf("WARN Scraper: Could not find the specific UL with 'RMT WebService' and 'Effective ... until ...' structure within container '%s' on page %s.", containerSelector, pageURL)
+		// For debugging, you could log the entire container's text:
+		// log.Printf("DEBUG: Container HTML for %s on %s: %s", containerSelector, pageURL, doc.Find(containerSelector).Text())
+		return nil, fmt.Errorf("target UL for effective dates not found on %s within %s", pageURL, containerSelector)
+	}
+
+	from, until, rawStr, err := parseEffectiveDateString(foundDateText)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse effective dates for %s from text '%s': %w", sourceName, foundDateText, err)
+	}
+
+	log.Printf("Scraper: Found effective dates for %s: From %s, Until %s (Raw: '%s')\n",
 		sourceName, from.Format(dateLayout), until.Format(dateLayout), rawStr)
 
 	return &models.DataSourceEffectiveInfo{
@@ -133,13 +117,22 @@ func GetEffectiveDatesForDataSource(sourceName, url, cssSelector string) (*model
 }
 
 // ScrapeEffectiveDatesForCDR fetches effective dates for the CDR data source.
-// QC: You may need to provide a more specific CSS selector for cdrDateStringSelector.
-func ScrapeEffectiveDatesForCDR(cdrDateStringSelector string) (*models.DataSourceEffectiveInfo, error) {
-	return GetEffectiveDatesForDataSource("CDR", cdrQueryPageURL, cdrDateStringSelector)
+func ScrapeEffectiveDatesForCDR() (*models.DataSourceEffectiveInfo, error) {
+	// The specific CSS selector from config is now less critical if the container approach works.
+	// We use the configured page URL and a general container selector.
+	pageURL := config.AppConfig.FAAURLs.CdrEffectiveDatePage
+	// Use the globally defined container or one from config if you make it configurable per source
+	container := rmtPageDateContainerSelector 
+	// If you stored specific selectors for CDR page in config, you could use:
+	// container := config.AppConfig.ScraperSelectors.CdrEffectiveDateContainer (new config field)
+	return GetEffectiveDatesForDataSource("CDR", pageURL, container)
 }
 
 // ScrapeEffectiveDatesForPreferredRoutes fetches effective dates for the Preferred Routes data source.
-// QC: You may need to provide a more specific CSS selector for prefRoutesDateStringSelector.
-func ScrapeEffectiveDatesForPreferredRoutes(prefRoutesDateStringSelector string) (*models.DataSourceEffectiveInfo, error) {
-	return GetEffectiveDatesForDataSource("PreferredRoutes", preferredRoutesQueryPageURL, prefRoutesDateStringSelector)
+func ScrapeEffectiveDatesForPreferredRoutes() (*models.DataSourceEffectiveInfo, error) {
+	pageURL := config.AppConfig.FAAURLs.PreferredRoutesEffectiveDatePage
+	container := rmtPageDateContainerSelector
+	// If you stored specific selectors for Pref Routes page in config, you could use:
+	// container := config.AppConfig.ScraperSelectors.PreferredRoutesEffectiveDateContainer (new config field)
+	return GetEffectiveDatesForDataSource("PreferredRoutes", pageURL, container)
 }

@@ -66,3 +66,31 @@ type DataSourceEffectiveInfo struct {
 	RawDateString  string    // The full "Effective ... until ..." string scraped
 	LastChecked    time.Time // When this information was scraped
 }
+
+
+// RecommendedRoute holds a processed route with its source and justification for display.
+type RecommendedRoute struct {
+	Origin          string
+	Destination     string
+	RouteString     string
+	Source          string    // e.g., "RQD Advisory", "CDR (No Coord)", "Preferred Route", "RAT Reroute"
+	Justification   string    // Reason for this route being chosen/listed (e.g., Advisory text, CDR code)
+	FullAdvisory    *AdvisoryDetail // If derived from an advisory, link to it
+	Cdr             *CdrRoute       // If it's a CDR
+	Preferred       *PreferredRoute // If it's a Preferred Route
+	Priority        int             // Lower is higher priority
+	Restrictions    string          // Any relevant restrictions or remarks
+	EffectiveStart  *time.Time      // For display
+	EffectiveEnd    *time.Time      // For display
+}
+
+// Constants for route priorities (lower is better)
+const (
+	PriorityRqdAdvisory         = 10
+	PriorityRatReroute          = 15 // Specific reroute from RAT reader
+	PriorityFileCDRsDirective   = 20 // When an advisory says "File CDRs"
+	PriorityCdrNoCoord          = 30
+	PriorityPreferredRoute      = 40
+	PriorityCdrCoord            = 50
+	PriorityInformationalAdvisory = 60
+)
