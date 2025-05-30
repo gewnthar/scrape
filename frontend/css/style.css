@@ -128,3 +128,30 @@ hr {
     margin-left: 10px;
     font-style: italic;
 }
+
+/* Styles for new status elements */
+.data-status-label {
+    font-weight: bold;
+    margin-left: 10px;
+}
+
+.data-status-value {
+    font-style: italic;
+    color: var(--aviation-blue-light); /* Or another suitable color */
+}
+
+.action-status { /* For messages like "Refreshing..." or "Error..." */
+    margin-left: 10px;
+    font-style: italic;
+}
+
+/* Minor adjustments for admin section layout */
+#admin-actions div {
+    margin-bottom: 12px; /* Increased spacing a bit */
+    display: flex; /* Align button and status messages nicely */
+    align-items: center;
+}
+
+#admin-actions button {
+    margin-right: 15px; /* Space between button and its status text */
+}

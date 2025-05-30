@@ -12,7 +12,7 @@ import (
 )
 
 // SaveCdrRoutes saves a slice of CdrRoute objects to the database.
-// (Code for SaveCdrRoutes from previous response - no changes here)
+// MODIFIED: Uses a "clear and load" strategy for a given sourceFile.
 func SaveCdrRoutes(routes []models.CdrRoute, sourceFile string, effectiveStart, effectiveEnd *time.Time) error {
 	if DB == nil {
 		return fmt.Errorf("database connection is not initialized")
@@ -24,32 +24,25 @@ func SaveCdrRoutes(routes []models.CdrRoute, sourceFile string, effectiveStart, 
 
 	tx, err := DB.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("failed to begin transaction for CDR routes: %w", err)
 	}
 	defer tx.Rollback() 
 
+	// Step 1: Delete existing routes for this sourceFile.
+	_, err = tx.Exec("DELETE FROM cdm_routes WHERE source_file = ?", sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to delete old CDR routes for source %s: %w", sourceFile, err)
+	}
+	log.Printf("Cleared existing CDR routes for source: %s\n", sourceFile)
+
+	// Step 2: Insert new routes
 	stmt, err := tx.Prepare(`
 		INSERT INTO cdm_routes (
 			route_code, origin, destination, departure_fix, route_string,
 			departure_artcc, arrival_artcc, traversed_artccs,
 			coordination_required, nav_eqp, associated_play,
-			effective_date_start, effective_date_end, source_file, updated_at
+			effective_date_start, effective_date_end, source_file, updated_at 
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-		ON DUPLICATE KEY UPDATE
-			origin = VALUES(origin),
-			destination = VALUES(destination),
-			departure_fix = VALUES(departure_fix),
-			route_string = VALUES(route_string),
-			departure_artcc = VALUES(departure_artcc),
-			arrival_artcc = VALUES(arrival_artcc),
-			traversed_artccs = VALUES(traversed_artccs),
-			coordination_required = VALUES(coordination_required),
-			nav_eqp = VALUES(nav_eqp),
-			associated_play = VALUES(associated_play),
-			effective_date_start = VALUES(effective_date_start),
-			effective_date_end = VALUES(effective_date_end),
-			source_file = VALUES(source_file),
-			updated_at = NOW()
 	`) 
 	if err != nil {
 		return fmt.Errorf("failed to prepare CDR insert statement: %w", err)
@@ -72,7 +65,12 @@ func SaveCdrRoutes(routes []models.CdrRoute, sourceFile string, effectiveStart, 
 			sqlEffectiveStart, sqlEffectiveEnd, sourceFile,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to execute CDR insert for route_code %s: %w", route.RouteCode, err)
+			// Log the problematic route for debugging
+			log.Printf("ERROR saving CDR route: %+v, Error: %v", route, err)
+			// Continue to try and save other routes, or return the error to stop all
+			// For bulk load, sometimes it's better to log and continue, then review errors.
+			// For now, let's return the error to be safe.
+			return fmt.Errorf("failed to execute CDR insert for route_code '%s', origin '%s', dest '%s': %w", route.RouteCode, route.Origin, route.Destination, err)
 		}
 	}
 
@@ -80,12 +78,11 @@ func SaveCdrRoutes(routes []models.CdrRoute, sourceFile string, effectiveStart, 
 		return fmt.Errorf("failed to commit transaction for CDR routes: %w", err)
 	}
 
-	log.Printf("Successfully saved/updated %d CDR routes from source: %s\n", len(routes), sourceFile)
+	log.Printf("Successfully saved %d CDR routes from source: %s\n", len(routes), sourceFile)
 	return nil
 }
 
-// SavePreferredRoutes saves a slice of PreferredRoute objects to the database.
-// (Code for SavePreferredRoutes from previous response - no changes here)
+// SavePreferredRoutes (remains the same - already uses clear and load)
 func SavePreferredRoutes(routes []models.PreferredRoute, sourceFile string, effectiveStart, effectiveEnd *time.Time) error {
 	if DB == nil {
 		return fmt.Errorf("database connection is not initialized")
@@ -136,7 +133,8 @@ func SavePreferredRoutes(routes []models.PreferredRoute, sourceFile string, effe
 			sqlEffectiveStart, sqlEffectiveEnd, sourceFile,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to execute Preferred Route insert for origin %s, dest %s: %w", route.Origin, route.Destination, err)
+			log.Printf("ERROR saving Preferred route: %+v, Error: %v", route, err)
+			return fmt.Errorf("failed to execute Preferred Route insert for origin '%s', dest '%s': %w", route.Origin, route.Destination, err)
 		}
 	}
 
@@ -149,23 +147,20 @@ func SavePreferredRoutes(routes []models.PreferredRoute, sourceFile string, effe
 }
 
 
-// GetMaxEffectiveEndDateForSource queries the database for the latest 'effective_date_end'
-// (Code for GetMaxEffectiveEndDateForSource from previous response - minor adjustment to pattern logic)
-func GetMaxEffectiveEndDateForSource(sourceIdentifier string) (*time.Time, error) { // Renamed param for clarity
+// GetMaxEffectiveEndDateForSource (remains the same)
+func GetMaxEffectiveEndDateForSource(sourceIdentifier string) (*time.Time, error) {
 	if DB == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
-
 	var query string
 	var pattern string
 
-	// Determine table and base pattern from a more generic identifier
 	if strings.EqualFold(sourceIdentifier, "CDR") {
 		query = "SELECT MAX(effective_date_end) FROM cdm_routes WHERE source_file LIKE ?"
-		pattern = "codedswap_db.csv%" // Base filename pattern
+		pattern = "codedswap_db.csv%" 
 	} else if strings.EqualFold(sourceIdentifier, "PreferredRoutes") {
 		query = "SELECT MAX(effective_date_end) FROM nfdc_preferred_routes WHERE source_file LIKE ?"
-		pattern = "prefroutes_db.csv%" // Base filename pattern
+		pattern = "prefroutes_db.csv%" 
 	} else {
 		return nil, fmt.Errorf("unknown source identifier for GetMaxEffectiveEndDateForSource: %s", sourceIdentifier)
 	}
@@ -188,17 +183,12 @@ func GetMaxEffectiveEndDateForSource(sourceIdentifier string) (*time.Time, error
 	return nil, nil
 }
 
-
-// --- NEW GETTER FUNCTIONS ---
-
-// GetCdrRoutesForOD retrieves active CDRs for a given origin and destination on a specific query date.
+// GetCdrRoutesForOD (remains the same)
 func GetCdrRoutesForOD(origin, destination string, queryDate time.Time) ([]models.CdrRoute, error) {
 	if DB == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
-
-	queryDateStr := queryDate.Format("2006-01-02") // Format for SQL DATE comparison
-
+	queryDateStr := queryDate.Format("2006-01-02")
 	rows, err := DB.Query(`
 		SELECT id, route_code, origin, destination, departure_fix, route_string,
 		       departure_artcc, arrival_artcc, traversed_artccs,
@@ -215,12 +205,10 @@ func GetCdrRoutesForOD(origin, destination string, queryDate time.Time) ([]model
 		return nil, fmt.Errorf("failed to query CDR routes for OD %s-%s on %s: %w", origin, destination, queryDateStr, err)
 	}
 	defer rows.Close()
-
 	var routes []models.CdrRoute
 	for rows.Next() {
 		var r models.CdrRoute
-		var effStart, effEnd sql.NullTime // Use sql.NullTime for nullable DATE fields
-
+		var effStart, effEnd sql.NullTime 
 		err := rows.Scan(
 			&r.ID, &r.RouteCode, &r.Origin, &r.Destination, &r.DepartureFix, &r.RouteString,
 			&r.DepartureARTCC, &r.ArrivalARTCC, &r.TraversedARTCCs,
@@ -229,7 +217,7 @@ func GetCdrRoutesForOD(origin, destination string, queryDate time.Time) ([]model
 		)
 		if err != nil {
 			log.Printf("ERROR: Failed to scan CDR route row: %v", err)
-			continue // Or return error
+			continue 
 		}
 		if effStart.Valid {
 			r.EffectiveDateStart = &effStart.Time
@@ -246,14 +234,12 @@ func GetCdrRoutesForOD(origin, destination string, queryDate time.Time) ([]model
 	return routes, nil
 }
 
-// GetPreferredRoutesForOD retrieves active Preferred Routes for a given origin and destination on a specific query date.
+// GetPreferredRoutesForOD (remains the same)
 func GetPreferredRoutesForOD(origin, destination string, queryDate time.Time) ([]models.PreferredRoute, error) {
 	if DB == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
-
 	queryDateStr := queryDate.Format("2006-01-02")
-
 	rows, err := DB.Query(`
 		SELECT id, origin, route_string, destination, hours1, hours2, hours3,
 		       route_type, area, altitude, aircraft, direction, sequence,
@@ -264,18 +250,16 @@ func GetPreferredRoutesForOD(origin, destination string, queryDate time.Time) ([
 		  AND (effective_date_start IS NULL OR effective_date_start <= ?)
 		  AND (effective_date_end IS NULL OR effective_date_end >= ?)
 		ORDER BY sequence, route_type 
-	`, origin, destination, queryDateStr, queryDateStr) // Added queryDateStr twice
+	`, origin, destination, queryDateStr, queryDateStr)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to query Preferred Routes for OD %s-%s on %s: %w", origin, destination, queryDateStr, err)
 	}
 	defer rows.Close()
-
 	var routes []models.PreferredRoute
 	for rows.Next() {
 		var pr models.PreferredRoute
 		var effStart, effEnd sql.NullTime
-
 		err := rows.Scan(
 			&pr.ID, &pr.Origin, &pr.RouteString, &pr.Destination, &pr.Hours1, &pr.Hours2, &pr.Hours3,
 			&pr.Type, &pr.Area, &pr.Altitude, &pr.Aircraft, &pr.Direction, &pr.Sequence,

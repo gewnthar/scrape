@@ -21,8 +21,7 @@
                 <input type="text" id="destination" name="destination" placeholder="e.g., MIA">
             </div>
             <div>
-                <label for="route-date">Date:</label>
-                <input type="date" id="route-date" name="route-date">
+                <label for="route-date">Date (optional, defaults to today):</label> <input type="date" id="route-date" name="route-date">
                 <button id="find-routes-btn">Find Routes</button>
             </div>
             <div id="routes-results-area" class="results-area">
@@ -69,25 +68,27 @@
             <p>Manually refresh static route databases from FAA CSVs.</p>
             <div>
                 <button id="refresh-cdr-btn">Refresh CDRs</button>
-                <span id="cdr-refresh-status"></span>
+                <span class="data-status-label">CDR Data Last Updated: </span><span id="cdr-last-updated" class="data-status-value">Checking...</span>
+                <span id="cdr-refresh-status" class="action-status"></span>
             </div>
             <div>
                 <button id="refresh-prefroutes-btn">Refresh Preferred Routes</button>
-                <span id="prefroutes-refresh-status"></span>
+                <span class="data-status-label">Preferred Routes Last Updated: </span><span id="prefroutes-last-updated" class="data-status-value">Checking...</span>
+                <span id="prefroutes-refresh-status" class="action-status"></span>
             </div>
              <div>
                 <button id="check-update-cdr-btn">Check & Update CDRs (if needed)</button>
-                <span id="cdr-check-status"></span>
+                <span id="cdr-check-status" class="action-status"></span>
             </div>
             <div>
                 <button id="check-update-prefroutes-btn">Check & Update Preferred Routes (if needed)</button>
-                <span id="prefroutes-check-status"></span>
+                <span id="prefroutes-check-status" class="action-status"></span>
             </div>
         </section>
     </main>
 
     <footer>
-        <p>&copy; 2025 Scrape Advisory</p>
+        <p>&copy; <span id="current-year"></span> Scrape Advisory</p>
     </footer>
 
     <script src="js/app.js"></script>
