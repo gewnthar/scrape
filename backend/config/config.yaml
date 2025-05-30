@@ -1,0 +1,35 @@
+# backend/config/config.yaml
+
+server:
+  port: "8080" # Port for your Go API server
+
+database:
+  host: "localhost"
+  port: "3306"
+  user: "your_db_user"      # Replace with your MariaDB username
+  password: "your_db_password"  # Replace with your MariaDB password
+  dbname: "faa_dst_db"     # Replace with your database name
+
+faa_urls:
+  cdr_csv: "https://www.fly.faa.gov/rmt/data_file/codedswap_db.csv"
+  preferred_routes_csv: "https://www.fly.faa.gov/rmt/data_file/prefroutes_db.csv"
+  # Add URLs for advisory list, detail, RAT reader, effective date pages later
+  # e.g., advisory_list: "https://www.fly.faa.gov/adv/adv_list.jsp"
+
+# (Optional) Define paths for where to save downloaded CSVs locally if needed
+local_csv_paths:
+  cdr: "./temp_data/codedswap_db.csv"
+  preferred_routes: "./temp_data/prefroutes_db.csv"
+
+# (Optional) Settings for effective date checking
+data_freshness:
+  # How often to check effective dates for static route DBs (e.g., "24h", "168h" for weekly)
+  route_db_check_interval: "24h" 
+  # Prediction for FAA data cycle
+  faa_publication_cycle_days: 56
+
+  scraper_selectors:
+  # QC: YOU MUST REPLACE THESE WITH ACTUAL CSS SELECTORS from the FAA RMT pages!
+  # These selectors target the HTML element containing "Effective ... until ..." text.
+  cdr_effective_date: "body" # Example: "p.date-class-on-cdr-page"
+  preferred_routes_effective_date: "body" # Example: "div#prefRouteDateInfo"
